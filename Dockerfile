@@ -69,6 +69,10 @@ COPY --from=builder /usr/lib/x86_64-linux-gnu/liblz4.so* /usr/lib/x86_64-linux-g
 COPY --from=builder /lib/x86_64-linux-gnu/libgcrypt.so* /lib/x86_64-linux-gnu/
 COPY --from=builder /lib/x86_64-linux-gnu/libpcre.so* /lib/x86_64-linux-gnu/
 COPY --from=builder /lib/x86_64-linux-gnu/libgpg-error.so* /lib/x86_64-linux-gnu/
+# These below are all needed for zmq
+COPY --from=builder /lib/x86_64-linux-gnu/*zmq* /lib/x86_64-linux-gnu/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/*zmq* /usr/lib/x86_64-linux-gnu/
+
 
 COPY --from=builder /fluent-bit /fluent-bit
 
