@@ -17,6 +17,7 @@ RUN apt-get update && \
       unzip \
       libssl-dev \
       libsasl2-dev \
+      libczmq-dev \
       pkg-config \
       libsystemd-dev \
       zlib1g-dev \
