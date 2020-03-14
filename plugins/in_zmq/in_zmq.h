@@ -26,10 +26,13 @@ struct flb_input_instance;
 
 struct flb_in_zmq_ctx {
     /* config */
-    const char *zmq_endpoint;
+    const char      *zmq_endpoint;
+    int       batch_size;
+    int       schedule_nanos;
 
-    zsock_t *zmq_pull_socket;
-    zpoller_t *zmq_poller;
+    int             coll_fd;
+    zsock_t         *zmq_pull_socket;
+    zpoller_t       *zmq_poller;
 
     /* Input instance reference */
     struct flb_input_instance *i_ins;

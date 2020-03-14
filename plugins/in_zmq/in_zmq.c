@@ -103,7 +103,34 @@ static int zmq_config_read(struct flb_in_zmq_ctx *ctx,
                            struct flb_input_instance *i_ins)
 {
     ctx->zmq_endpoint = flb_input_get_property("endpoint", i_ins);
+    if (ctx->zmq_endpoint == NULL) {
+        flb_plg_error(i_ins, "error reading 'endpoint' from configuration");
+        return -1;
+    }
 
+    char *batch_size = flb_input_get_property("batch_size", i_ins);
+    if (batch_size == NULL) {
+        ctx->batch_size = 5000;
+    } else {
+        ctx->batch_size = atoi(batch_size);
+        if (ctx->batch_size <= 0) {
+            flb_plg_error(i_ins, "batch size has to be positive integer");
+            return -1;
+        }
+    }
+
+    char *schedule_nanos = flb_input_get_property("schedule_nanos", i_ins);
+    if (schedule_nanos == NULL) {
+        ctx->schedule_nanos = 5000;
+    } else {
+        ctx->schedule_nanos = atoi(schedule_nanos);
+        if (ctx->schedule_nanos <= 0) {
+            flb_plg_error(i_ins, "schedule_nanos size has to be positive integer");
+            return -1;
+        }
+    }
+
+    ctx->zmq_endpoint = flb_input_get_property("endpoint", i_ins);
     if (ctx->zmq_endpoint == NULL) {
         flb_plg_error(i_ins, "error reading 'endpoint' from configuration");
         return -1;
@@ -123,14 +150,14 @@ static int in_zmq_collect(struct flb_input_instance *in,
     struct flb_in_zmq_ctx *ctx = in_context;
 
     int counter = 0;
-    zpoller_wait(ctx->zmq_poller, 0);
-    while (zpoller_expired(ctx->zmq_poller) == false && zpoller_terminated(ctx->zmq_poller) == false && counter <= 5000) {
+    zpoller_wait(ctx->zmq_poller, 50);
+    while (zpoller_expired(ctx->zmq_poller) == false && zpoller_terminated(ctx->zmq_poller) == false && counter <= ctx->batch_size) {
         char *my_message = zstr_recv(ctx->zmq_pull_socket);
         zmq_data_append(my_message, strlen(my_message), in);
         flb_plg_debug(in, "message len '%d'", strlen(my_message));
         zstr_free(&my_message);
         counter++;
-        zpoller_wait(ctx->zmq_poller, 0);
+        zpoller_wait(ctx->zmq_poller, 50);
     }
     return 0;
 }
@@ -164,7 +191,6 @@ int in_zmq_exit(void *in_context, struct flb_config *config)
 int in_zmq_init(struct flb_input_instance *in,
                 struct flb_config *config, void *data)
 {
-    int ret;
     struct flb_in_zmq_ctx *ctx = NULL;
     (void) data;
 
@@ -198,8 +224,8 @@ int in_zmq_init(struct flb_input_instance *in,
     }
 
 
-    ret = zsock_bind(ctx->zmq_pull_socket, "%s", ctx->zmq_endpoint);
-    if (ret < 0) {
+    ctx->coll_fd = zsock_bind(ctx->zmq_pull_socket, "%s", ctx->zmq_endpoint);
+    if (ctx->coll_fd < 0) {
         flb_plg_error(in, "zsock_bind(%s) failed: %s", ctx->zmq_endpoint,
                   strerror(errno));
         goto error;
@@ -209,10 +235,10 @@ int in_zmq_init(struct flb_input_instance *in,
     /* Set our collector based on an fd event using underlying fd */
 //    ret = flb_input_set_collector_event(in, in_zmq_collect, ctx->server_fd, config);
 //    ret = flb_input_set_collector_socket(in, in_zmq_collect, ctx->server_fd, config);
-    ret = flb_input_set_collector_time(in, in_zmq_collect, 0, 500000, config);
+    ctx->coll_fd = flb_input_set_collector_time(in, in_zmq_collect, 0, ctx->schedule_nanos, config);
 
 
-    if (ret < 0) {
+    if (ctx->coll_fd < 0) {
         flb_plg_error(in, "flb_input_set_collector_event failed: %s",
                   strerror(errno));
         goto error;
@@ -238,6 +264,21 @@ error:
     return -1;
 }
 
+static void in_zmq_pause(void *data, struct flb_config *config)
+{
+    struct flb_in_zmq_ctx *ctx = data;
+    flb_plg_info(ctx->i_ins, "Pausing");
+    flb_input_collector_pause(ctx->coll_fd, ctx->i_ins);
+}
+
+static void in_zmq_resume(void *data, struct flb_config *config)
+{
+    struct flb_in_zmq_ctx *ctx = data;
+    flb_plg_info(ctx->i_ins, "Resuming");
+    flb_input_collector_resume(ctx->coll_fd, ctx->i_ins);
+}
+
+
 /* Plugin reference */
 struct flb_input_plugin in_zmq_plugin = {
     .name         = "zmq",
@@ -246,5 +287,7 @@ struct flb_input_plugin in_zmq_plugin = {
     .cb_pre_run   = NULL,
     .cb_collect   = in_zmq_collect,
     .cb_flush_buf = NULL,
+    .cb_pause     = in_zmq_pause,
+    .cb_resume    = in_zmq_resume,
     .cb_exit      = in_zmq_exit
 };
