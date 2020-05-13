@@ -168,9 +168,8 @@ int in_zmq_exit(void *in_context, struct flb_config *config)
     struct flb_in_zmq_ctx *ctx = in_context;
     int ret;
 
-    flb_plg_debug(ctx->i_ins, "exiting '%s'", ctx->zmq_endpoint);
-
     if (ctx) {
+        flb_plg_debug(ctx->i_ins, "exiting '%s'", ctx->zmq_endpoint);
         if (ctx->zmq_poller) {
             zpoller_destroy(&(ctx->zmq_poller));
         }
