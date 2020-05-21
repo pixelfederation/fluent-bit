@@ -17,46 +17,14 @@ macro(FLB_RT_TEST BUILT src)
 endmacro()
 
 # Input Plugins
-if(FLB_OUT_LIB)
-  # These plugins works only on Linux
-  if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-    FLB_RT_TEST(FLB_IN_CPU           "in_cpu.c")
-    FLB_RT_TEST(FLB_IN_DISK          "in_disk.c")
-    FLB_RT_TEST(FLB_IN_MEM           "in_mem.c")
-    FLB_RT_TEST(FLB_IN_PROC          "in_proc.c")
-  endif()
-  FLB_RT_TEST(FLB_IN_HEAD          "in_head.c")
-  FLB_RT_TEST(FLB_IN_DUMMY         "in_dummy.c")
-  FLB_RT_TEST(FLB_IN_RANDOM        "in_random.c")
-endif()
 
 # Filter Plugins
 if(FLB_IN_LIB AND FLB_OUT_LIB)
-  FLB_RT_TEST(FLB_FILTER_STDOUT     "filter_stdout.c")
-  FLB_RT_TEST(FLB_FILTER_GREP       "filter_grep.c")
-  FLB_RT_TEST(FLB_FILTER_THROTTLE   "filter_throttle.c")
-  FLB_RT_TEST(FLB_FILTER_NEST       "filter_nest.c")
-  FLB_RT_TEST(FLB_FILTER_KUBERNETES "filter_kubernetes.c")
-  FLB_RT_TEST(FLB_FILTER_PARSER     "filter_parser.c")
-  FLB_RT_TEST(FLB_FILTER_MODIFY     "filter_modify.c")
+  FLB_RT_TEST(FLB_FILTER_GEOIP      "filter_geoip.c")
 endif()
 
 
 # Output Plugins
-if(FLB_IN_LIB)
-  FLB_RT_TEST(FLB_OUT_LIB          "core_engine.c")
-  FLB_RT_TEST(FLB_OUT_COUNTER      "out_counter.c")
-  FLB_RT_TEST(FLB_OUT_ES           "out_elasticsearch.c")
-  FLB_RT_TEST(FLB_OUT_EXIT         "out_exit.c")
-  FLB_RT_TEST(FLB_OUT_FILE         "out_file.c")
-  FLB_RT_TEST(FLB_OUT_FLOWCOUNTER  "out_flowcounter.c")
-  FLB_RT_TEST(FLB_OUT_FORWARD      "out_forward.c")
-  FLB_RT_TEST(FLB_OUT_NULL         "out_null.c")
-  FLB_RT_TEST(FLB_OUT_PLOT         "out_plot.c")
-  FLB_RT_TEST(FLB_OUT_RETRY        "out_retry.c")
-  FLB_RT_TEST(FLB_OUT_STDOUT       "out_stdout.c")
-  FLB_RT_TEST(FLB_OUT_TD           "out_td.c")
-endif()
 
 
 # HTTP Client Debug (requires -DFLB_HTTP_CLIENT_DEBUG=On)
