@@ -24,7 +24,8 @@ RUN apt-get update && \
     libpq-dev \
     postgresql-server-dev-all \
     flex \
-    bison
+    bison \
+    libmaxminddb-dev
 
 RUN mkdir -p /fluent-bit/bin /fluent-bit/etc /fluent-bit/log /tmp/src/
 COPY . /tmp/src/
@@ -93,6 +94,9 @@ COPY --from=builder /usr/lib/x86_64-linux-gnu/libgmp* /usr/lib/x86_64-linux-gnu/
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libffi* /usr/lib/x86_64-linux-gnu/
 COPY --from=builder /lib/x86_64-linux-gnu/libcom_err* /lib/x86_64-linux-gnu/
 COPY --from=builder /lib/x86_64-linux-gnu/libkeyutils* /lib/x86_64-linux-gnu/
+
+# GEOIP filter plugin
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libmaxminddb.so.0 /usr/lib/x86_64-linux-gnu/
 
 COPY --from=builder /fluent-bit /fluent-bit
 
