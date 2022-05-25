@@ -1,0 +1,65 @@
+name: Docker build and push to ECR
+
+# Global env variables
+env:
+  container_registry: 266775278674.dkr.ecr.eu-west-1.amazonaws.com
+  repo_name: devops #docker/fluentbit
+  ecr_username: AWS
+  slack_channel: devops_notifications
+
+# Controls when the workflow will run
+on:
+  create:
+    tags:
+      - 'zmq_*'
+  workflow_dispatch:
+    inputs:
+      custom_tag:
+        required: false
+        default: 'untagged'
+
+jobs:
+  build-and-push:
+    strategy:
+      matrix:
+        arch:
+          - amd64
+        image_name:
+          - fluent-bit-build-test-${{ github.run_number }}
+    runs-on: ${{ matrix.arch }}
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+
+      # Get tag name
+      - name: Get image tag
+        id: tag
+        run: |
+          if [[ ${GITHUB_REF_TYPE} == tag ]]
+          then
+            tag=${GITHUB_REF##*/}
+          else
+            tag=${{ github.event.inputs.custom_tag }}
+          fi
+          echo "Tag: ${tag}"
+          echo "::set-output name=tag::$tag"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+        id: buildx
+        with:
+          endpoint: default
+
+      - name: Build and push
+        uses: docker/build-push-action@v2
+        with:
+          push: true
+          tags: ${{ env.container_registry }}/${{ env.repo_name }}:${{ matrix.image_name }}-${{ matrix.arch }}
+          builder: default
+          file: Dockerfile
+          context: .
+          platforms: linux/${{ matrix.arch }}
