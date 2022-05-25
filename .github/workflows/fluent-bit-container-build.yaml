@@ -3,7 +3,7 @@ name: Docker build and push to ECR
 # Global env variables
 env:
   container_registry: 266775278674.dkr.ecr.eu-west-1.amazonaws.com
-  repo_name: devops #docker/fluentbit
+  repo_name: docker/fluentbit
   ecr_username: AWS
   slack_channel: devops_notifications
 
@@ -25,7 +25,7 @@ jobs:
         arch:
           - amd64
         image_name:
-          - fluent-bit-build-test-${{ github.run_number }}
+          - zmq-fluent-bit
     runs-on: ${{ matrix.arch }}
     outputs:
       image_tag: ${{ steps.tag.outputs.tag }}
@@ -58,7 +58,9 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           push: true
-          tags: ${{ env.container_registry }}/${{ env.repo_name }}:${{ matrix.image_name }}-${{ matrix.arch }}
+          tags: |
+            ${{ env.container_registry }}/${{ env.repo_name }}:${{ matrix.image_name }}-${{ steps.tag.outputs.tag }}
+            ${{ env.container_registry }}/${{ env.repo_name }}:${{ matrix.image_name }}-${{ steps.tag.outputs.tag }}-${{ matrix.arch }}
           builder: default
           file: Dockerfile
           context: .
