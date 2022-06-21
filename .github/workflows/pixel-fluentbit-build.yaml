@@ -1,0 +1,269 @@
+name: Docker build and push to ECR
+
+# Global env variables
+env:
+  ecr_username: AWS
+  ecr_registry: 266775278674.dkr.ecr.eu-west-1.amazonaws.com
+  ecr_repo: devops
+  #ecr_repo: fluentbit
+  pxfd_registry: docker-registry.pxfd.tech
+  slack_channel: devops_notifications
+
+# Controls when the workflow will run
+on:
+  push:
+    tags:
+      - 1.*_*
+      - 2.*_*
+  workflow_dispatch:
+    inputs:
+      custom_tag:
+        description: 'Tag to build'
+        required: true
+        type: string
+
+jobs:
+  prod-build-push:
+    strategy:
+      matrix:
+        arch:
+          - amd64
+          - arm64
+
+    runs-on: pxfd-linux-c1-${{ matrix.arch }}
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - name: Get image tags
+        id: tag
+        run: |
+          if [[ ${GITHUB_REF_TYPE} == tag ]]; then
+            tag=${GITHUB_REF##*/}
+          else
+            tag=${{ github.event.inputs.custom_tag }}
+          fi
+
+          echo "PfTag: ${tag}"
+
+          echo "::set-output name=pftag::$tag"
+
+
+      - name: Parse tag semver string
+        id: semver
+        uses: pixelfederation/gh-action-semver-parser@v0.1.2
+        with:
+          tag: ${{ steps.tag.outputs.pftag }}
+        # env:
+        #   ACTIONS_STEP_DEBUG: true
+
+      # Import Secrets
+      - name: Import Secrets
+        id: secrets
+        uses: hashicorp/vault-action@v2.4.0
+        with:
+          url: 'https://vault.kube.shared.pxfd.tech'
+          method: kubernetes
+          role:  'action-github-runner'
+          secrets: |
+            secret/pxfd-shared-eks/action-runner-controller/runners_secrets slack_info_webhook ;
+
+      - name: Checkout Server
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ steps.tag.outputs.pftag }}
+
+      - name: Create docker context
+        run: |
+          docker context create ctx
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        id: buildx
+        with:
+          endpoint: ctx
+          driver-opts: env.BUILDKIT_STEP_LOG_MAX_SIZE=10485760,env.BUILDKIT_STEP_LOG_MAX_SPEED=10485760
+          buildkitd-flags: tlscert=/certs/client/cert.pem,tlscacert=/certs/client/ca.pem,tlskey=/certs/client/key.pem
+
+      - name: Inspect builder
+        run: |
+          echo "Name:      ${{ steps.buildx.outputs.name }}"
+          echo "Endpoint:  ${{ steps.buildx.outputs.endpoint }}"
+          echo "Status:    ${{ steps.buildx.outputs.status }}"
+          echo "Flags:     ${{ steps.buildx.outputs.flags }}"
+          echo "Platforms: ${{ steps.buildx.outputs.platforms }}"
+          echo "Release":  ${{ steps.semver.outputs.release }}"
+          echo "ut":       ${{ steps.semver.outputs.ut }}"
+          echo "pft:       ${{ steps.semver.outputs.pft }}"
+
+      - name: Build and push - base
+        uses: docker/build-push-action@v2
+        with:
+          push: true
+          tags: ${{ env.ecr_registry }}/${{ env.ecr_repo }}:${{ steps.semver.outputs.pft }}-${{ matrix.arch }}
+          builder: ${{ steps.buildx.outputs.name }}
+          file: Dockerfile
+          context: .
+          target: production
+          platforms: linux/${{ matrix.arch }}
+          # XXX: This should use some more generic tag like 8.1.3-fpm-bullseye-ARCH not whole pixel tag because that is unique
+          cache-from: ${{ env.ecr_registry }}/${{ env.ecr_repo }}:${{ steps.semver.outputs.pft }}-${{ matrix.arch }}
+          cache-to: type=inline
+          build-args: |
+            RELEASE_VERSION=${{ steps.semver.outputs.ut }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          # we are finally building with buildkit and there is no local image, trivy is unable to use AWS_* vars ( according docs it should be no problem )
+          # https://aquasecurity.github.io/trivy/v0.17.0/private-registries/ecr/
+          # GET https://266775278674.dkr.ecr.eu-west-1.amazonaws.com/v2/php-fpm/manifests/8.1.7-fpm-bullseye_5-amd64: unexpected status code 401 Unauthorized: Not Authorized
+          image-ref: ${{ env.pxfd_registry }}/${{ env.ecr_repo }}:${{ steps.semver.outputs.pft }}-${{ matrix.arch }}
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      # Test base nginx container
+      # - name: Test nginx
+      #   id: test
+      #   run: |
+      #     docker run --rm ${{ env.kaniko_registry }}/${{ env.kaniko_image_name }}:${{ steps.tag.outputs.pftag }} nginx-test.sh
+
+  prod-create-manifests:
+    needs:
+      - prod-build-push
+
+    strategy:
+      matrix:
+        arch:
+          - amd64
+
+    runs-on: pxfd-linux-c1-${{ matrix.arch }}
+
+    steps:
+      - name: Get image tags
+        id: tag
+        run: |
+          if [[ ${GITHUB_REF_TYPE} == tag ]]; then
+            tag=${GITHUB_REF##*/}
+          else
+            tag=${{ github.event.inputs.custom_tag }}
+          fi
+
+          echo "PfTag: ${tag}"
+
+          echo "::set-output name=pftag::$tag"
+
+      - name: Parse tag semver string
+        id: semver
+        uses: pixelfederation/gh-action-semver-parser@v0.1.2
+        with:
+          tag: ${{ steps.tag.outputs.pftag }}
+
+      # XXX: We have to repeat this multiple times as we ca nonly specify one target right now
+      - name: Get ECR login
+        id: ecr
+        run: |
+          #!/usr/bin/env bash
+          set -e
+          PASSWORD=$(aws ecr get-login-password)
+          echo "::add-mask::${PASSWORD}"
+          echo "::set-output name=password::${PASSWORD}"
+
+      - name: Push manifest
+        uses: pixelfederation/gh-action-manifest-tool@v0.1.1
+        with:
+          username: ${{ env.ecr_username }}
+          password: ${{ steps.ecr.outputs.password }}
+          platforms: linux/amd64,linux/arm64
+          template: ${{ env.ecr_registry }}/${{ env.ecr_repo }}:${{ steps.semver.outputs.pft }}-ARCH
+          target: ${{ env.ecr_registry }}/${{ env.ecr_repo }}:${{ steps.semver.outputs.pft }}
+
+      - name: Push manifest
+        uses: pixelfederation/gh-action-manifest-tool@v0.1.1
+        with:
+          username: ${{ env.ecr_username }}
+          password: ${{ steps.ecr.outputs.password }}
+          platforms: linux/amd64,linux/arm64
+          template: ${{ env.ecr_registry }}/${{ env.ecr_repo }}:${{ steps.semver.outputs.pft }}-ARCH
+          target: ${{ env.ecr_registry }}/${{ env.ecr_repo }}:${{ steps.semver.outputs.ut }}
+
+      # - name: Push manifest
+      #   uses: pixelfederation/gh-action-manifest-tool@v0.1.1
+      #   with:
+      #     username: ${{ env.ecr_username }}
+      #     password: ${{ steps.ecr.outputs.password }}
+      #     platforms: linux/amd64,linux/arm64
+      #     template: ${{ env.ecr_registry }}/${{ env.ecr_repo }}:${{ steps.semver.outputs.pft }}-ARCH
+      #     target: ${{ env.ecr_registry }}/${{ env.ecr_repo }}:${{ steps.semver.outputs.mmpr }}
+
+  send-slack-notification:
+    needs:
+      - prod-create-manifests
+
+    if: ${{ always() }}
+
+    strategy:
+      matrix:
+        arch:
+          - amd64
+
+    runs-on: pxfd-linux-c1-${{ matrix.arch }}
+
+    steps:
+      - name: Get image tags
+        id: tag
+        run: |
+          if [[ ${GITHUB_REF_TYPE} == tag ]]; then
+            tag=${GITHUB_REF##*/}
+          else
+            tag=${{ github.event.inputs.custom_tag }}
+          fi
+
+          echo "PfTag: ${tag}"
+
+          echo "::set-output name=pftag::$tag"
+
+      - name: Parse tag semver string
+        id: semver
+        uses: pixelfederation/gh-action-semver-parser@v0.1.2
+        with:
+          tag: ${{ steps.tag.outputs.pftag }}
+
+      - name: Import Secrets
+        id: secrets
+        uses: hashicorp/vault-action@v2.4.0
+        with:
+          url: https://vault.kube.shared.pxfd.tech/
+          method: kubernetes
+          role:  "action-github-runner"
+          secrets: |
+            secret/pxfd-shared-eks/action-runner-controller/runners_secrets slack_info_webhook ;
+
+      # Get build status
+      - name: Get build status
+        if: always()
+        id: build_status
+        run: |
+          if [[ ${{ job.status }} == success ]]
+          then
+            echo "::set-output name=slack_title::build successful"
+            echo "::set-output name=slack_msg::successfully built."
+          else
+            echo "::set-output name=slack_title::build failed"
+            echo "::set-output name=slack_msg::failed"
+          fi
+
+      # Send slack notification
+      - name: Slack Notification
+        if: always()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ steps.secrets.outputs.slack_info_webhook }}
+          SLACK_CHANNEL: ${{  env.slack_channel  }}
+          SLACK_USERNAME: github-actions
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_TITLE: Init container - ${{ steps.build_status.outputs.slack_title }}
+          SLACK_MESSAGE: "Pixel Fluentbit container image with tags: ${{ steps.semver.outputs.pft }}, ${{ steps.semver.outputs.mmr }}, ${{ steps.semver.outputs.ut }} ${{ steps.build_status.outputs.slack_msg }} "
+          SLACK_ICON: https://i.postimg.cc/RVG6bWcm/github-actions-pxfd.png
